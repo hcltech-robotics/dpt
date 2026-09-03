@@ -45,6 +45,7 @@ def on_config(config):
         raise ValueError("The manual citation must match the root citation files")
     config.site_name = title
     config.site_author = display_name
+    config.repo_url = config.repo_url or project["urls"]["Source"]
     config.extra["dpt"] = {
         "title": title,
         "author": display_name,
