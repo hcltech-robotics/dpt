@@ -11,6 +11,7 @@ on:
       - mkdocs.yml
       - pyproject.toml
       - python/dpt/**
+      - skills/**
   pull_request:
     paths:
       - .github/workflows/docs.yml
@@ -20,6 +21,7 @@ on:
       - mkdocs.yml
       - pyproject.toml
       - python/dpt/**
+      - skills/**
   workflow_dispatch:
 
 permissions:

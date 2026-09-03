@@ -43,6 +43,13 @@ nav:
       - Agentic imaging with a real CT: applications/agentic-imaging.md
       - Pose from a radiograph: applications/agentic-radiograph.md
       - Performance: performance.md
+  - Agent skills:
+      - Choose a workflow: applications/agent-skills.md
+      - Navigator: skills/dpt-navigator.md
+      - Calibrated pose recovery: skills/dpt-pose-recovery.md
+      - Radiograph matching: skills/dpt-match-radiograph.md
+      - View planning: skills/dpt-view-planning.md
+      - Rendering integration: skills/integrate-rendering.md
   - Reference:
       - API and mathematics: reference/index.md
       - Citation: citation.md

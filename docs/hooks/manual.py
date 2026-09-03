@@ -1,10 +1,12 @@
-"""Render package metadata and citation downloads from the root citation files."""
+"""Render package metadata, citation downloads and canonical agent skills."""
 
 from __future__ import annotations
 
 import re
 import tomllib
+from os.path import relpath
 from pathlib import Path
+from urllib.parse import quote, urlsplit
 
 import yaml
 from mkdocs.structure.files import File
@@ -53,10 +55,36 @@ def on_config(config):
     return config
 
 
+def skill_markdown(source, destination, root, repo_url):
+    def skill_link(match):
+        parts = urlsplit(match[1])
+        if parts.scheme or parts.netloc or not parts.path or parts.path.startswith("/"):
+            return match[0]
+        resolved = (source.parent / parts.path).resolve()
+        fragment = f"#{parts.fragment}" if parts.fragment else ""
+        if resolved.name == "SKILL.md" and resolved.parent.parent == root / "skills":
+            location = f"skills/{resolved.parent.name}.md"
+        elif resolved.is_relative_to(root / "docs"):
+            location = resolved.relative_to(root / "docs").as_posix()
+        elif resolved.is_relative_to(root):
+            location = f"{repo_url}/blob/main/{quote(resolved.relative_to(root).as_posix())}"
+            return f"]({location}{fragment})"
+        else:
+            return match[0]
+        location = relpath(location, Path(destination).parent).replace("\\", "/")
+        return f"]({location}{fragment})"
+
+    return re.sub(r"\]\(([^\s)]+)\)", skill_link, source.read_text(encoding="utf-8"))
+
+
 def on_files(files, config):
     root = Path(config.config_file_path).resolve().parent
     for name in ("CITATION.cff", "CITATION.bib"):
         files.append(File.generated(config, name, abs_src_path=str(root / name)))
+    for source in sorted((root / "skills").glob("*/SKILL.md")):
+        destination = f"skills/{source.parent.name}.md"
+        markdown = skill_markdown(source, destination, root, config.repo_url)
+        files.append(File.generated(config, destination, content=markdown))
     return files
 
 

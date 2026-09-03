@@ -1,0 +1,6 @@
+interface:
+  display_name: "DPT view planning"
+  short_description: "Plan CT region views or select the next acquisition"
+  default_prompt: "Use $dpt-view-planning to choose imaging views for my CT region and acquisition constraints."
+policy:
+  allow_implicit_invocation: true

@@ -74,6 +74,8 @@ volume_sensitivity = field.grad
 
 ## Agentic imaging
 
+Use [`$dpt-navigator`](skills/dpt-navigator/SKILL.md) to select the skill for the question: [calibrated pose recovery](skills/dpt-pose-recovery/SKILL.md), [ordinary-radiograph matching](skills/dpt-match-radiograph/SKILL.md), or [view planning](skills/dpt-view-planning/SKILL.md). The [agent skills guide](https://hcltech-robotics.github.io/dpt/applications/agent-skills/) gives example requests and commands.
+
 Give a coding agent a NIfTI CT or a DICOM series directory. One command prepares two simulated radiographs, fits the CT pose and writes the assessment:
 
 ```bash

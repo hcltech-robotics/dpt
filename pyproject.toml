@@ -62,7 +62,10 @@ docs = [
 release = ["build==1.6.1", "twine==7.0.0"]
 
 [tool.hatch.build.targets.sdist]
-include = ["python/dpt", "tests/python", "benchmarks", "examples", "docs", "tools", "mkdocs.yml", "uv.lock", "README.md", "CITATION.cff", "CITATION.bib", "LICENSE", "pyproject.toml"]
+include = ["python/dpt", "tests/python", "benchmarks", "examples", "docs", "tools", "skills", "AGENTS.md", "mkdocs.yml", "uv.lock", "README.md", "CITATION.cff", "CITATION.bib", "LICENSE", "pyproject.toml"]
+# Preserve canonical skill paths when Hatch traverses repository discovery symlinks.
+exclude = [".agents"]
+skip-excluded-dirs = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/dpt"]

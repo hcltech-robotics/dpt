@@ -1,0 +1,6 @@
+interface:
+  display_name: "DPT workflow navigator"
+  short_description: "Select the right DPT imaging workflow and skill"
+  default_prompt: "Use $dpt-navigator to select the imaging skill for my question and available CT, radiographs or region of interest."
+policy:
+  allow_implicit_invocation: true

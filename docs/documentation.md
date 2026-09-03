@@ -21,4 +21,6 @@ python -m mkdocs serve --dev-addr 127.0.0.1:8000
 
 The build reads `CITATION.cff` for the title, author and version, and includes both root citation files as downloads. Geist Sans, Geist Mono and MathJax are bundled with the manual. Their licences and checksums are in `docs/assets/vendor/`.
 
+The agent-skill pages are generated from `skills/*/SKILL.md` during the build. Edit those canonical files to update both the agent instructions and their rendered manual pages.
+
 Use `$...$` or `\(...\)` for inline mathematics, and `$$...$$` or `\[...\]` on separate lines for displayed equations. The API pages use static source analysis, with all build dependencies listed in `docs/requirements.txt`.

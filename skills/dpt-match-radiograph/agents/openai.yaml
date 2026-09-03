@@ -1,0 +1,6 @@
+interface:
+  display_name: "DPT radiograph pose matching"
+  short_description: "Match a CT pose to an ordinary radiograph"
+  default_prompt: "Use $dpt-match-radiograph to match this CT to a reference radiograph using approximate geometry and report the best pose and loss reduction."
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,6 @@
+interface:
+  display_name: "DPT pose recovery"
+  short_description: "Recover CT pose from calibrated X-ray views"
+  default_prompt: "Use $dpt-pose-recovery to inspect my two-view case, fit within a stated budget, and report the transform and residuals."
+policy:
+  allow_implicit_invocation: true
