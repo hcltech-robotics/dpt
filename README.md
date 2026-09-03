@@ -2,7 +2,7 @@
 
 **Chris von Csefalvay**
 
-[Documentation](docs/index.md) · [Performance](docs/performance.md) · [Agentic imaging](docs/applications/agentic-imaging.md) · [Citation](#citation)
+[Documentation](https://hcltech-robotics.github.io/dpt/) · [Performance](https://hcltech-robotics.github.io/dpt/performance/) · [Agentic imaging](https://hcltech-robotics.github.io/dpt/applications/agentic-imaging/) · [Citation](#citation)
 
 DPT turns a CT volume and physical acquisition geometry into differentiable X-ray projections on CUDA. It provides PyTorch volume and pose derivatives, spectral image formation, detector operations and stochastic photon transport.
 
@@ -143,7 +143,7 @@ The quick example uses the declared 60 keV water-scaled model `max(1 + HU/1000, 
 
 ## Citation
 
-von Csefalvay, C. (2026). *DPT: Differentiable Photon Transport* (version 1.0.0) [Computer software]. [Source repository](https://github.com/chrisvoncsefalvay/dpt).
+von Csefalvay, C. (2026). *DPT: Differentiable Photon Transport* (version 1.0.0) [Computer software]. [Source repository](https://github.com/hcltech-robotics/dpt).
 
 ```bibtex
 @software{voncsefalvay2026dpt,
@@ -151,7 +151,7 @@ von Csefalvay, C. (2026). *DPT: Differentiable Photon Transport* (version 1.0.0)
   title = {{DPT}: Differentiable Photon Transport},
   year = {2026},
   version = {1.0.0},
-  url = {https://github.com/chrisvoncsefalvay/dpt}
+  url = {https://github.com/hcltech-robotics/dpt}
 }
 ```
 

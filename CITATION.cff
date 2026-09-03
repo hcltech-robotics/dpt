@@ -6,8 +6,8 @@ version: 1.0.0
 authors:
   - family-names: "von Csefalvay"
     given-names: "Chris"
-repository-code: "https://github.com/chrisvoncsefalvay/dpt"
-url: "https://github.com/chrisvoncsefalvay/dpt"
+repository-code: "https://github.com/hcltech-robotics/dpt"
+url: "https://hcltech-robotics.github.io/dpt/"
 license:
   - Apache-2.0
   - BSD-3-Clause

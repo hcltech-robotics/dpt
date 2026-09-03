@@ -1,4 +1,8 @@
 site_name: 'DPT: Differentiable Photon Transport'
+site_url: https://hcltech-robotics.github.io/dpt/
+repo_url: https://github.com/hcltech-robotics/dpt
+repo_name: hcltech-robotics/dpt
+edit_uri: ''
 site_description: Real CT projection and differentiable X-ray imaging on CUDA.
 site_author: Chris von Csefalvay
 docs_dir: docs

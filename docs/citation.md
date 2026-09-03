@@ -1,6 +1,6 @@
 # Cite DPT
 
-von Csefalvay, C. (2026). DPT: Differentiable Photon Transport (version 1.0.0) [Computer software]. https://github.com/chrisvoncsefalvay/dpt
+von Csefalvay, C. (2026). DPT: Differentiable Photon Transport (version 1.0.0) [Computer software]. https://github.com/hcltech-robotics/dpt
 
 [Download BibTeX](../CITATION.bib){ download="CITATION.bib" } · [Download Citation File Format](../CITATION.cff){ download="CITATION.cff" }
 
@@ -10,6 +10,6 @@ von Csefalvay, C. (2026). DPT: Differentiable Photon Transport (version 1.0.0) [
   title = {{DPT}: Differentiable Photon Transport},
   year = {2026},
   version = {1.0.0},
-  url = {https://github.com/chrisvoncsefalvay/dpt}
+  url = {https://github.com/hcltech-robotics/dpt}
 }
 ```

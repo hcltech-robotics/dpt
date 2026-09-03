@@ -19,9 +19,9 @@ classifiers = [
 ]
 
 [project.urls]
-Source = "https://github.com/chrisvoncsefalvay/dpt"
-Documentation = "https://github.com/chrisvoncsefalvay/dpt/blob/main/docs/index.md"
-Issues = "https://github.com/chrisvoncsefalvay/dpt/issues"
+Source = "https://github.com/hcltech-robotics/dpt"
+Documentation = "https://hcltech-robotics.github.io/dpt/"
+Issues = "https://github.com/hcltech-robotics/dpt/issues"
 
 [project.scripts]
 dpt = "dpt.cli:main"

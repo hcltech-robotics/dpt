@@ -11,7 +11,9 @@ python -m pip install --require-hashes -r docs/requirements.txt
 python -m mkdocs build --strict
 ```
 
-The rendered manual is written to `site/`. To preview it locally:
+The rendered manual is written to `site/`. Changes on `main` publish to [the online manual](https://hcltech-robotics.github.io/dpt/) through GitHub Actions. Pull requests build a downloadable preview.
+
+To preview it locally:
 
 ```bash
 python -m mkdocs serve --dev-addr 127.0.0.1:8000
