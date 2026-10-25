@@ -90,13 +90,26 @@ Each outstanding node owns its density/amplitude snapshot, source states and nat
 
 `Projector(grid=..., geometry=..., precision="fp32", samples_per_ray=1024)` fixes the acquisition and prepares native device workspaces lazily on first use. `module(field, pose=None)` returns `(views, rows, columns)` optical depth. The field is a contiguous FP32 tensor with the grid's `(nz, ny, nx)` shape, containing finite nonnegative attenuation in mm⁻¹. Output is FP32 for `precision="fp32"` and FP64 for `precision="fp64"`. The input field and its gradient remain FP32 in both cases. `pose` holds FP64 right SE(3) increments `(6,)` or `(views, 6)`. `packed_pose=` explicitly supplies `(12,)` or `(views, 12)` transforms instead. Both pose forms describe object-to-world motion. `pose` acts about the constructor's `anchor` (identity by default), while `packed_pose` overrides it. Supply only one form. A tensor anchor must be on the field device, using `module.to(device)` when needed. See [the real-volume Torch example](../pytorch.md).
 
-All views share the detector shape and resolved midpoint count. `step_mm` is an alternative to `samples_per_ray`: it resolves the count once from the volume-support diagonal, and each clipped ray uses that count. The module supports fixed cone, parallel and curved detector views. Its functional dispatcher operator takes serialisable geometry values and returns a fresh tensor. A separately registered VJP computes first-order gradients. FakeTensor metadata implementations let `torch.compile(..., fullgraph=True)` trace the surrounding tensor graph. Use `torch.compile(module, backend="inductor", fullgraph=True)` for Inductor. The native projection kernels remain Warp kernels. Torch `>=2.14,<3` is the supported dependency.
+All views share the detector shape and resolved midpoint count. `step_mm` is an alternative to `samples_per_ray`: it resolves the count once from the volume-support diagonal, and each clipped ray uses that count. The module supports fixed cone, parallel and curved detector views. Its functional dispatcher operator takes serialisable geometry values and returns a fresh tensor. A separately registered VJP computes first-order gradients. FakeTensor metadata implementations let `torch.compile(..., fullgraph=True)` trace the surrounding tensor graph. Use `torch.compile(module, backend="inductor", fullgraph=True)` for Inductor. The default backend uses Warp projection kernels. Torch `>=2.14,<3` is the supported dependency.
 
 Field, pose and cotangent validation is enqueued on the native execution stream. A single aggregate status read completes each successful forward or backward call. Failed calls may read individual statuses again to deliver view-specific diagnostics. Forward and backward each have their own completion boundary. Mutable inputs are scanned on every invocation. Final accumulated volume gradients are checked for overflow. Delivered errors clear the private status state for the next call. Outputs from a failed call must be discarded.
 
 `out=` declares mutation of the output alone and is restricted to inference. It must be contiguous, have the projected shape/dtype/device, not overlap an input and have `requires_grad=False`. When an input requires gradients, use `torch.no_grad()` or omit `out=`. The method returns the supplied buffer. Functional outputs and gradients never alias inputs or private scratch. Saved tensors retain Torch version checks. Checked operators are marked `cudagraph_unsafe` and do not support CUDA graph capture or higher-order differentiation. Native workspace caching is bounded and distinguishes geometry, device, current calling stream and derivative activity. Native launches retain tensor storage through completion. Separate outstanding autograd nodes keep their own saved inputs and outputs. Follow Torch's producer/consumer stream dependencies when crossing streams. See [full-scan measurements](../performance/fullscan.md) for the checked timing boundaries.
 
 ::: dpt.torch.modules.Projector
+
+Set `backend="cuda_texture"` to select the CUDA C++ midpoint forward and volume
+adjoint with `precision="fp32"`. The backend retains the FP32 sample positions
+and interpolation weights. Pose derivatives, FP64 projection and CPU execution
+use Warp. The default backend is `"warp"`.
+
+Multiview cone projections run as one CUDA launch and refresh the volume texture
+once per call. Scalar calls refresh it independently. Workspaces with the same
+grid and stream share the texture allocation.
+
+The first CUDA preparation compiles for the selected GPU with `nvcc`. Set
+`DPT_NVCC` to a compiler path if it is absent from `PATH`. Compiled libraries are
+cached in `~/.cache/dpt/cuda`; `DPT_CUDA_CACHE` selects another cache directory.
 
 ## Transmission, detector and objective
 

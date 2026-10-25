@@ -98,6 +98,11 @@ class ProjectionSpec:
     ``validate='once'`` checks owned snapshots at preparation and raw buffers
     at every evaluation. ``'always'`` rescans all inputs on every call;
     ``'never'`` uses explicit caller-managed content/status checkpoints.
+
+    ``backend='cuda_texture'`` selects CUDA C++ texture reads and a
+    voxel-footprint volume adjoint for FP32 midpoint sampling. Pose derivatives,
+    other sampling policies and CPU execution use Warp. Captured forwards also
+    use Warp. CUDA compilation requires nvcc for the selected GPU.
     """
 
     samples_per_ray: int
@@ -109,6 +114,7 @@ class ProjectionSpec:
     sampling_precision: Literal["float32", "float64", "mixed_float32", "fast_float32"] = "float64"
     storage_precision: Literal["float32", "float16", "bfloat16"] = "float32"
     validate: ValidationPolicy = "once"
+    backend: Literal["warp", "cuda_texture"] = "warp"
 
     def __post_init__(self) -> None:
         integer(self.samples_per_ray, "samples_per_ray", minimum=1)
@@ -138,6 +144,8 @@ class ProjectionSpec:
             raise ContractError("active input flags must be booleans")
         if self.validate not in ("once", "always", "never"):
             raise ContractError("projection validate must be once, always or never")
+        if self.backend not in ("warp", "cuda_texture"):
+            raise ContractError("projection backend must be warp or cuda_texture")
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -230,6 +238,7 @@ class ProjectionWorkspace:
     _reduction: ReductionTree | None = field(repr=False)
     _empty_partials: Any = field(repr=False)
     _recorded_tape: Any = field(default=None, repr=False)
+    _native: Any = field(default=None, repr=False)
     _status_readback: StatusReadback = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -259,6 +268,7 @@ class ProjectionWorkspace:
             4
             + (48 * self.geometry.pixels if isinstance(self.geometry, RayBundleGeometry) else 0)
             + (self._reduction.scratch_bytes if self._reduction is not None else 0)
+            + (self._native.scratch_bytes if self._native is not None else 0)
         )
 
     @property
@@ -609,7 +619,7 @@ def prepare_projection(
         empty_partials = wp.empty(0, dtype=wp.float64, device=context.device)
         if spec.active_pose:
             reduction = prepare_reduction(context, geometry.pixels, tile=_BLOCK, components=12)
-    return ProjectionWorkspace(
+    workspace = ProjectionWorkspace(
         grid,
         geometry,
         spec,
@@ -622,6 +632,15 @@ def prepare_projection(
         reduction,
         empty_partials,
     )
+    if (
+        context.device.is_cuda
+        and spec.backend == "cuda_texture"
+        and (spec.sampling_precision == "float32")
+    ):
+        from dpt._cuda_texture import NativeProjection
+
+        workspace._native = NativeProjection(workspace)
+    return workspace
 
 
 def _inputs(mu: Any, pose: Any, workspace: ProjectionWorkspace, stream: wp.Stream | None) -> None:
@@ -793,16 +812,21 @@ def project_optical_depth(
             )
         _check_tape_arrays(mu, _api_pose, out_L, workspace)
     _validate_evaluation(mu, _api_pose, workspace, policy)
-    ctx.wp.launch(
-        _forward_kernel(workspace),
-        dim=workspace.geometry.pixels,
-        inputs=[mu, _api_pose, workspace._configuration],
-        outputs=[out_L, workspace._status],
-        stream=workspace.stream,
-        device=workspace.device,
-        block_dim=_FORWARD_BLOCK,
-        record_tape=False,
-    )
+    if workspace._native is not None and not ctx.device.is_capturing:
+        workspace._native.forward(
+            mu, _api_pose, out_L, workspace.spec.precision == "float64", workspace._status
+        )
+    else:
+        ctx.wp.launch(
+            _forward_kernel(workspace),
+            dim=workspace.geometry.pixels,
+            inputs=[mu, _api_pose, workspace._configuration],
+            outputs=[out_L, workspace._status],
+            stream=workspace.stream,
+            device=workspace.device,
+            block_dim=_FORWARD_BLOCK,
+            record_tape=False,
+        )
     if policy != "never":
         workspace.check_status()
     if tape is not None:
@@ -964,6 +988,27 @@ def projection_vjp(
         writes.append(("out_mu", out_mu))
     ctx.disjoint([("mu", mu), ("pose", _api_pose), ("cotangent", cotangent)], writes)
     _validate_evaluation(mu, _api_pose, workspace, policy, cotangent)
+    if workspace._native is not None and out_mu is not None:
+        workspace._native.adjoint(
+            _api_pose,
+            cotangent,
+            out_mu,
+            workspace.spec.precision == "float64",
+            volume_gradient_precision == "float64",
+            accumulate,
+            workspace._status,
+        )
+        if check_volume_gradient:
+            workspace.enqueue_volume_gradient_check(
+                out_mu, volume_gradient_precision=volume_gradient_precision, stream=stream
+            )
+        # The existing pose kernel differentiates the same midpoint values.
+        # Passing no volume destination prevents a second volume accumulation.
+        if target is None:
+            if policy != "never":
+                workspace.check_status()
+            return
+        out_mu = None
     if out_mu is not None and not accumulate:
         with ctx.scope():
             out_mu.zero_()

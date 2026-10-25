@@ -16,7 +16,7 @@ from typing import Any
 
 import torch
 
-from dpt._runtime import StatusCheckpoint, load_kernels, require_no_tape
+from dpt._runtime import HostReadback, StatusCheckpoint, load_kernels, require_no_tape
 from dpt.contracts import ContractError, NumericalError
 from dpt.geometry import (
     BatchedGeometry,
@@ -51,6 +51,7 @@ def configuration(grid: GridSpec, geometry: BatchedGeometry, spec: ProjectionSpe
             "views": [[kinds[type(panel)], asdict(panel)] for panel in geometry.views],
             "samples": spec.samples_per_ray,
             "precision": spec.precision,
+            "backend": spec.backend,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -83,7 +84,12 @@ def _decode(value: str) -> tuple[GridSpec, BatchedGeometry, ProjectionSpec]:
     precision = encoded["precision"]
     if precision not in ("float32", "float64"):
         raise ContractError("Torch projection arithmetic must be float32 or float64")
-    spec = ProjectionSpec(encoded["samples"], precision=precision, sampling_precision=precision)
+    spec = ProjectionSpec(
+        encoded["samples"],
+        precision=precision,
+        sampling_precision=precision,
+        backend=encoded.get("backend", "warp"),
+    )
     return grid, geometry, spec
 
 
@@ -117,11 +123,22 @@ class _Prepared:
     statuses: Any
     checkpoint: StatusCheckpoint
     pose_kernel: Any
+    forward_batch: Any = None
+    status_readback: Any = None
     lock: Any = field(default_factory=RLock)
 
     @property
     def context(self):
         return self.workspaces[0].context
+
+    def consume(self) -> None:
+        if self.status_readback is None:
+            self.checkpoint.consume()
+            return
+        with self.context.scope():
+            codes = self.status_readback.read()
+            if any(codes):
+                self.checkpoint._deliver(codes, consume=True)
 
 
 def prepare(field: torch.Tensor, value: str, active_volume: bool, active_pose: bool) -> _Prepared:
@@ -169,6 +186,16 @@ def prepare(field: torch.Tensor, value: str, active_volume: bool, active_pose: b
         found = _Prepared(
             workspaces, statuses, checkpoint, load_kernels("dpt.kernels.batched_geometry")
         )
+        if 1 < len(workspaces) <= 65535 and all(
+            workspace._native is not None and not workspace._configuration.is_ray_bundle
+            for workspace in workspaces
+        ):
+            from dpt._cuda_texture import NativeBatch
+
+            found.forward_batch = NativeBatch(tuple(workspace._native for workspace in workspaces))
+            # The words already form a contiguous batch. Reading them directly
+            # avoids one device copy and one zero-write launch for every view.
+            found.status_readback = HostReadback(found.context, statuses)
         _CACHE[key] = found
         while len(_CACHE) > _CACHE_LIMIT:
             _CACHE.popitem(last=False)
@@ -239,17 +266,26 @@ def _forward(
         images = torch.empty(shape, dtype=dtype, device=field.device) if out is None else out
         bridge.record(packed_poses, images)
         native_field = wp.from_torch(field.reshape(-1), requires_grad=False)
-        _validate(entry, native_field, wp.from_torch(packed_poses, requires_grad=False))
-        for index, workspace in enumerate(entry.workspaces):
-            _native_project(
+        native_poses = wp.from_torch(packed_poses, requires_grad=False)
+        _validate(entry, native_field, native_poses)
+        if entry.forward_batch is not None and not entry.context.device.is_capturing:
+            entry.forward_batch.forward(
                 native_field,
-                wp.from_torch(packed_poses[index], requires_grad=False),
-                workspace=workspace,
-                out_L=wp.from_torch(images[index].reshape(-1), requires_grad=False),
-                stream=workspace.stream,
-                validate=False,
+                native_poses,
+                wp.from_torch(images.reshape(-1), requires_grad=False),
+                entry.statuses,
             )
-        entry.checkpoint.consume()
+        else:
+            for index, workspace in enumerate(entry.workspaces):
+                _native_project(
+                    native_field,
+                    wp.from_torch(packed_poses[index], requires_grad=False),
+                    workspace=workspace,
+                    out_L=wp.from_torch(images[index].reshape(-1), requires_grad=False),
+                    stream=workspace.stream,
+                    validate=False,
+                )
+        entry.consume()
     return images
 
 

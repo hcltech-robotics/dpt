@@ -22,7 +22,9 @@ type GeometryInput = BatchedGeometry | PanelGeometry | Sequence[PanelGeometry]
 __all__ = ["Projector"]
 
 
-def _projection_spec(precision: Precision, samples: int) -> ProjectionSpec:
+def _projection_spec(
+    precision: Precision, samples: int, backend: Literal["warp", "cuda_texture"] = "warp"
+) -> ProjectionSpec:
     """The single mapping from user precision to native arithmetic."""
     if precision not in ("fp32", "fp64"):
         raise ContractError("precision must be fp32 or fp64")
@@ -33,6 +35,7 @@ def _projection_spec(precision: Precision, samples: int) -> ProjectionSpec:
         active_volume=True,
         precision=arithmetic,
         sampling_precision=arithmetic,
+        backend=backend,
     )
 
 
@@ -87,11 +90,14 @@ class Projector(torch.nn.Module):
 
     Native workspaces are cached by fixed geometry, device and calling stream.
     Every call validates mutable inputs and delivers diagnostics once after
-    the complete multiview forward or backward operation. Native per-view
-    projection kernels and the order of volume-gradient additions are retained.
+    the complete multiview forward or backward operation. Volume gradients
+    are accumulated in view order.
     Torch dispatcher registration supports FakeTensor and full-graph compilation;
     checked calls cannot be captured in a CUDA graph. ``out=`` writes directly
     into caller-owned output for inference only.
+
+    ``backend='cuda_texture'`` selects the CUDA C++ FP32 midpoint kernels.
+    Compilation requires nvcc; FP64 and CPU calculations use Warp.
     """
 
     anchor: torch.Tensor | None
@@ -105,6 +111,7 @@ class Projector(torch.nn.Module):
         samples_per_ray: int | None = None,
         step_mm: float | None = None,
         anchor: RigidTransform | torch.Tensor | None = None,
+        backend: Literal["warp", "cuda_texture"] = "warp",
     ) -> None:
         super().__init__()
         if not isinstance(grid, GridSpec):
@@ -112,9 +119,10 @@ class Projector(torch.nn.Module):
         self.grid = grid
         self.geometry = _geometry(geometry)
         self.precision = precision
+        self.backend = backend
         self.samples_per_ray = _samples(grid, samples_per_ray, step_mm)
         self.step_mm = step_mm
-        self._spec = _projection_spec(precision, self.samples_per_ray)
+        self._spec = _projection_spec(precision, self.samples_per_ray, backend)
         self._configuration = _projection_ops.configuration(self.grid, self.geometry, self._spec)
         self._fixed_poses: dict[str, torch.Tensor] = {}
         if isinstance(anchor, torch.Tensor):
