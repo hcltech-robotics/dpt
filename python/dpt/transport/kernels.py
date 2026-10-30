@@ -1,10 +1,8 @@
-"""Canonical complete-history Warp kernels, including the likelihood-ratio replay.
+"""Trace photon histories and replay their likelihood-ratio derivatives.
 
-No path-by-event storage, queue allocation, roulette or hidden truncation. One
-thread owns one original history and writes one sparse detector contribution.
-Derivative replay runs the *same* flight function with a selected active material.
-This initial scheduling candidate is unprofiled: divergence, register pressure,
-FP64 cost and tally contention require actual-device acceptance before any claim.
+Each thread traces one original history. Sparse output contains one detector
+contribution per history; derivative calls replay the same flight function and
+random coordinates.
 """
 
 # pyright: reportInvalidTypeForm=false, reportUnknownParameterType=false
@@ -130,6 +128,7 @@ class Parameters:
     energy_score: int
     continuous_absorption: int
     voxel_density: int
+    majorant_max_density: wp.array(dtype=wp.float64)
     physics: PhysicalParameters
     sampling: RandomDesign
 
@@ -359,6 +358,29 @@ def coefficients_at(
         (wp.float64(1.0) - fraction) * scattering[offset + lower]
         + fraction * scattering[offset + upper],
     )
+
+
+@wp.func
+def direct_majorant_flight_allowed(
+    coordinate: wp.vec2d,
+    majorant: wp.float64,
+    absorption: wp.array(dtype=wp.float64),
+    scattering: wp.array(dtype=wp.float64),
+    density: wp.array(dtype=wp.float64),
+    p: Parameters,
+) -> int:
+    if p.majorant_max_density.shape[0] != density.shape[0]:
+        return 0
+    for material in range(density.shape[0]):
+        voxel_scale = p.majorant_max_density[material]
+        if voxel_scale > wp.float64(0.0):
+            interaction = coefficients_at(material, coordinate, absorption, scattering, p)
+            rate = density[material] * (interaction[0] + interaction[1])
+            if p.voxel_density != 0:
+                rate = product3(density[material], voxel_scale, interaction[0] + interaction[1])
+            if not wp.isfinite(rate) or rate >= majorant:
+                return 0
+    return 1
 
 
 @wp.func
@@ -616,6 +638,49 @@ def cross_faces(
                 result.cell[axis] -= 1
         if result.cell[axis] < 0 or result.cell[axis] >= p.shape[axis]:
             result.inside = 0
+    return result
+
+
+@wp.func
+def woodcock_flight(
+    position: wp.vec3d,
+    direction: wp.vec3d,
+    optical_distance: wp.float64,
+    majorant: wp.float64,
+    p: Parameters,
+) -> GridEntry:
+    """Advance to a majorant candidate or the outer grid boundary."""
+    result = GridEntry()
+    result.position = position
+    result.status = ESCAPED
+    result.alive = 0
+    if not wp.isfinite(majorant) or majorant <= wp.float64(0.0):
+        result.status = NUMERICAL_FAILURE
+        return result
+    distances = wp.vec3d(MAX_DISTANCE)
+    faces = wp.vec3d(wp.float64(0.0))
+    for axis in range(3):
+        if direction[axis] != wp.float64(0.0):
+            face = p.origin[axis]
+            if direction[axis] > wp.float64(0.0):
+                face = grid_face(p.origin[axis], p.spacing[axis], p.shape[axis])
+            faces[axis] = face
+            distances[axis] = wp.max((face - position[axis]) / direction[axis], wp.float64(0.0))
+    exit_distance = wp.min(distances[0], wp.min(distances[1], distances[2]))
+    if not wp.isfinite(exit_distance):
+        result.status = NUMERICAL_FAILURE
+        return result
+    # A tiny majorant can overflow the candidate distance; that flight exits.
+    distance = optical_distance / majorant
+    if distance < exit_distance:
+        result.position = position + distance * direction
+        result.cell = cell_index(result.position, direction, p)
+        result.alive = 1
+    else:
+        result.position = position + exit_distance * direction
+        for axis in range(3):
+            if direction[axis] != wp.float64(0.0) and distances[axis] == exit_distance:
+                result.position[axis] = faces[axis]
     return result
 
 
@@ -943,6 +1008,14 @@ def _make_walk(recording: bool, coefficient_recording: bool = False, readout: bo
         result.status = entry.status
         crossings = int(0)
         branch_weight = wp.float64(1.0)
+        allow_direct_woodcock = int(p.physics.enabled != 0 and p.physics.woodcock != 0)
+        direct_woodcock = int(0)
+        checked_energy = wp.float64(-1.0)
+        if wp.static(readout):
+            # FP32 interpolation can exceed a bound valid in FP64. The mixed
+            # path checks that rounded rate in every traversed cell.
+            if readout_records.mixed_rates != 0:
+                allow_direct_woodcock = 0
         if wp.static(readout):
             # A photon entering material at the cutoff deposits before flight.
             # A ray missing the grid still carries its detector contribution.
@@ -1022,6 +1095,23 @@ def _make_walk(recording: bool, coefficient_recording: bool = False, readout: bo
             physical_extinction = wp.float64(0.0)
             extinction = wp.float64(0.0)
             flat = int(0)
+            majorant = wp.float64(0.0)
+            if p.physics.enabled != 0 and p.physics.woodcock != 0:
+                majorant = energy_table_value(p.physics.majorant, 0, coordinate, p.energy_bins)
+            if allow_direct_woodcock != 0 and checked_energy != result.energy:
+                # Interpolation can consume one-ULP nodal slack. Keep cellwise
+                # checks when the rounded rate at this energy reaches the bound.
+                direct_woodcock = direct_majorant_flight_allowed(
+                    coordinate, majorant, absorption, scattering, density, p
+                )
+                checked_energy = result.energy
+            if direct_woodcock != 0:
+                flight = woodcock_flight(position, direction, residual, majorant, p)
+                position = flight.position
+                cell = flight.cell
+                alive = flight.alive
+                if alive == 0:
+                    result.status = flight.status
             while alive != 0 and collision == 0:
                 flat = (cell[2] * p.shape[1] + cell[1]) * p.shape[0] + cell[0]
                 material = material_ids[flat]
@@ -1040,9 +1130,7 @@ def _make_walk(recording: bool, coefficient_recording: bool = False, readout: bo
                     )
                 physical_extinction = extinction
                 if p.physics.enabled != 0 and p.physics.woodcock != 0:
-                    extinction = energy_table_value(
-                        p.physics.majorant, 0, coordinate, p.energy_bins
-                    )
+                    extinction = majorant
                     if physical_extinction >= extinction:
                         result.status = NUMERICAL_FAILURE
                         alive = 0
@@ -1097,6 +1185,9 @@ def _make_walk(recording: bool, coefficient_recording: bool = False, readout: bo
                         coefficient_rate = density[material] * basis * node_value
                         if p.voxel_density != 0:
                             coefficient_rate *= voxel_density[flat]
+                if direct_woodcock != 0:
+                    collision = 1
+                    break
                 face_distance = distances_to_faces(position, direction, cell, p)
                 distance = wp.min(face_distance[0], wp.min(face_distance[1], face_distance[2]))
                 if not wp.isfinite(distance):
@@ -1643,6 +1734,23 @@ def walk_readout(
         active,
         records,
     )
+
+
+@wp.kernel
+def prepare_majorant_density_bounds(
+    material_ids: wp.array(dtype=wp.int32),
+    voxel_density: wp.array(dtype=wp.float64),
+    maximum: wp.array(dtype=wp.float64),
+):
+    index = wp.tid()
+    material = material_ids[index]
+    participating = int(material >= 0 and material < maximum.shape[0])
+    scale = wp.float64(1.0)
+    if voxel_density.shape[0] != 0:
+        scale = voxel_density[index]
+    group = grouped_tally(scale, material, 1, participating)
+    if group[1] > wp.float64(0.0):
+        wp.atomic_max(maximum, material, group[0])
 
 
 @wp.kernel

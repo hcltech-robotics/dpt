@@ -299,31 +299,35 @@ def project_vjp(
         packed_poses = poses.contiguous()
         seed = _pack_cotangent(torch, cotangent).reshape(shape)
         pose_gradient = torch.zeros_like(packed_poses) if active_pose else poses.new_empty((0,))
-        gradient = field.new_empty((0,))
+        gradient = torch.zeros_like(field) if active_volume else field.new_empty((0,))
+        # Sum eight views in FP32 (two for FP64 sampling), then combine in FP64.
+        batch_views = 8 if entry.workspaces[0].spec.sampling_precision == "float32" else 2
+        total = (
+            torch.empty_like(field, dtype=torch.float64)
+            if active_volume and len(entry.workspaces) > batch_views
+            else None
+        )
         bridge.record(packed_poses, seed, gradient, pose_gradient)
+        if total is not None:
+            bridge.record(total)
         native_field = wp.from_torch(field.reshape(-1), requires_grad=False)
+        native_gradient = (
+            wp.from_torch(gradient.reshape(-1), requires_grad=False) if active_volume else None
+        )
         _validate(
             entry,
             native_field,
             wp.from_torch(packed_poses, requires_grad=False),
             wp.from_torch(seed.reshape(-1), requires_grad=False),
         )
-        # StackBackward visits its last input first. Keep each native scatter
-        # separate and add in that same order; this candidate changes checks,
-        # not the accumulation across views.
-        for index in reversed(range(len(entry.workspaces))):
+        for completed, index in enumerate(reversed(range(len(entry.workspaces))), 1):
             workspace = entry.workspaces[index]
-            increment = torch.zeros_like(field) if active_volume else None
-            if increment is not None:
-                bridge.record(increment)
             _native_vjp(
                 native_field,
                 wp.from_torch(packed_poses[index], requires_grad=False),
                 workspace=workspace,
                 cotangent=wp.from_torch(seed[index].reshape(-1), requires_grad=False),
-                out_mu=wp.from_torch(increment.reshape(-1), requires_grad=False)
-                if increment is not None
-                else None,
+                out_mu=native_gradient,
                 out_pose_matrix=wp.from_torch(pose_gradient[index], requires_grad=False)
                 if active_pose
                 else None,
@@ -332,12 +336,16 @@ def project_vjp(
                 accumulate=active_volume,
                 check_volume_gradient=not active_volume,
             )
-            if increment is not None:
-                if gradient.numel() == 0:
-                    gradient = increment
+            if total is not None and (completed % batch_views == 0 or index == 0):
+                if completed <= batch_views:
+                    total.copy_(gradient)
                 else:
-                    gradient.add_(increment)
+                    total.add_(gradient)
+                if index > 0:
+                    gradient.zero_()
         if active_volume:
+            if total is not None:
+                gradient.copy_(total)
             entry.workspaces[0].enqueue_volume_gradient_check(
                 wp.from_torch(gradient.reshape(-1), requires_grad=False)
             )

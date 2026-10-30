@@ -14,7 +14,8 @@ pytestmark = pytest.mark.gpu
 
 
 @pytest.mark.parametrize("precision", ["fp32", "fp64"])
-def test_compiled_projector_retains_inputs_across_backward_streams(precision, monkeypatch):
+@pytest.mark.parametrize("views", [2, 5, 9])
+def test_compiled_projector_retains_inputs_across_backward_streams(precision, views, monkeypatch):
     torch.compiler.reset()
     grid = GridSpec((3, 3, 4), (1.0, 1.0, 1.0), (-1.5, -1.0, -1.0))
     panel = DetectorGeometry(
@@ -27,7 +28,7 @@ def test_compiled_projector_retains_inputs_across_backward_streams(precision, mo
     )
     module = Projector(
         grid=grid,
-        geometry=BatchedGeometry((panel, panel)),
+        geometry=BatchedGeometry((panel,) * views),
         precision=precision,
         samples_per_ray=64,
     )
@@ -83,11 +84,11 @@ def test_compiled_projector_retains_inputs_across_backward_streams(precision, mo
     torch.testing.assert_close(first, saved, rtol=0, atol=0)
     torch.testing.assert_close(first, torch.full_like(first, 0.5), rtol=2e-6, atol=2e-7)
     torch.testing.assert_close(second, torch.full_like(second, 0.25), rtol=2e-6, atol=2e-7)
-    # Two centre rays cross four one-mm cells. The two fields scale by 0.5+0.25.
+    # Each centre ray crosses four one-mm cells. The fields scale by 0.5+0.25.
     expected_field = torch.zeros_like(field)
-    expected_field[1, 1, :] = 1.5
+    expected_field[1, 1, :] = 0.75 * views
     expected_pose = torch.zeros_like(pose)
-    expected_pose[1] = -0.06
+    expected_pose[1] = -0.03 * views
     torch.testing.assert_close(field_gradient, expected_field, rtol=3e-6, atol=3e-7)
     torch.testing.assert_close(pose_gradient, expected_pose, rtol=3e-6, atol=3e-7)
     torch.compiler.reset()

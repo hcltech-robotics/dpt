@@ -95,6 +95,8 @@ Fluorescence requires analogue transport, and emitted energies above the cutoff 
 
 An optional energy-dependent majorant `M[E]` replaces cell-boundary free-flight sampling with Woodcock candidates of rate `M`. Each candidate is real with probability `mu/M`, while a null candidate preserves the photon. The supplied majorant stays fixed under density differentiation and must satisfy strict `M > mu` in every scaled cell and at every energy node. Preparation and dynamic-density validation check that slack.
 
+Flights jump directly to the next candidate or the grid boundary. The walker checks the interpolated majorant at each new photon energy. If rounding consumes its margin, it uses cellwise traversal to preserve rate checks. Mixed-rate readout and next-event connection integrals also use cellwise traversal.
+
 For a log-density score, a real mark contributes `+1` and a null mark contributes `-mu/(M-mu)`. The fixed-majorant candidate flight has zero density score. Null candidates consume the declared event budget, so exhausting it invalidates the whole estimate. The same energy-ledger and original-history denominator apply to either traversal.
 
 ```mermaid

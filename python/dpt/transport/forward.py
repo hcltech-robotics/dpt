@@ -219,6 +219,12 @@ def prepare_transport(
     assert voxel_density is not None
     parameters.voxel_density = int(voxel_density.size != 0)
     parameters.physics, physical_buffers = _prepare_physical_parameters(physical, spec, context)
+    if parameters.physics.woodcock != 0:
+        with context.scope():
+            parameters.majorant_max_density = wp.zeros(
+                spec.grid.materials, dtype=wp.float64, device=context.device
+            )
+        physical_buffers += (("majorant_max_density", parameters.majorant_max_density),)
     workspace = TransportWorkspace(
         spec,
         max_histories,
@@ -249,6 +255,12 @@ def prepare_transport(
                 [scattering, parameters.physics, status],
             )
             workspace.check_status()
+    if parameters.physics.woodcock != 0:
+        workspace._launch(
+            kernels.prepare_majorant_density_bounds,
+            int(material_ids.size),
+            [material_ids, voxel_density, parameters.majorant_max_density],
+        )
     return workspace
 
 
