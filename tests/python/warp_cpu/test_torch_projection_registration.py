@@ -36,7 +36,7 @@ def _independent_compile():
     torch.compiler.reset()
 
 
-def problem(device, precision, mode="both"):
+def problem(device, precision, mode="both", views=3):
     grid = GridSpec((3, 3, 4), (0.7, 0.8, 0.9), (-1.0, -1.0, -1.0))
     panel = DetectorGeometry(
         (-8.0, 0.1, -0.2),
@@ -47,14 +47,16 @@ def problem(device, precision, mode="both"):
         (2, 3),
     )
     geometry = BatchedGeometry(
-        tuple(replace(panel, origin_mm=(8.0, -0.3 + i * 0.03, -0.4)) for i in range(3))
+        tuple(replace(panel, origin_mm=(8.0, -0.3 + i * 0.03, -0.4)) for i in range(views))
     )
     module = Projector(grid=grid, geometry=geometry, precision=precision, samples_per_ray=47)
     field = torch.linspace(0.1, 0.3, grid.voxels, dtype=torch.float32, device=device).reshape(
         grid.shape
     )
     field.requires_grad_(mode != "pose")
-    poses = torch.tensor(RigidTransform().packed(), dtype=torch.float64, device=device).repeat(3, 1)
+    poses = torch.tensor(RigidTransform().packed(), dtype=torch.float64, device=device).repeat(
+        views, 1
+    )
     poses.requires_grad_(mode != "volume")
     return module, field, poses
 
@@ -72,8 +74,11 @@ def legacy(module, field, poses):
 
 @pytest.mark.parametrize("precision", ["fp32", "fp64"])
 @pytest.mark.parametrize("mode", ["volume", "pose", "both"])
-def test_registered_projection_matches_per_view_forward_and_gradients(warp_device, precision, mode):
-    module, field, poses = problem(warp_device, precision, mode)
+@pytest.mark.parametrize("views", [1, 3, 4, 5, 8, 9, 17])
+def test_registered_projection_matches_per_view_forward_and_gradients(
+    warp_device, precision, mode, views
+):
+    module, field, poses = problem(warp_device, precision, mode, views)
     expected = legacy(module, field, poses)
     actual = module(field, packed_pose=poses)
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
@@ -221,20 +226,23 @@ def test_deferred_errors_are_delivered_and_next_call_recovers(warp_device, preci
         torch.testing.assert_close(new, old, rtol=5e-6, atol=5e-7)
 
 
-def test_aggregate_volume_overflow_is_reported(warp_device):
+@pytest.mark.parametrize("views", [2, 17])
+def test_aggregate_volume_overflow_is_reported(warp_device, views):
     grid = GridSpec((1, 1, 1), (1.0, 1.0, 1.0))
     panel = DetectorGeometry(
         (-2.0, 0.0, 0.0), (2.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0), (1, 1)
     )
     module = Projector(
-        grid=grid, geometry=BatchedGeometry((panel, panel)), precision="fp32", samples_per_ray=1
+        grid=grid, geometry=BatchedGeometry((panel,) * views), precision="fp32", samples_per_ray=1
     )
     field = torch.ones(grid.shape, dtype=torch.float32, device=warp_device, requires_grad=True)
     image = module(field)
-    # Each view's derivative is 0.75*max_float32; only their sum overflows.
-    seed = torch.full_like(image, 0.75 * torch.finfo(torch.float32).max)
+    # Individual views fit in FP32; their sum does not.
+    seed = torch.full_like(image, (1.5 / views) * torch.finfo(torch.float32).max)
     with pytest.raises(NumericalError, match="non-finite"):
-        torch.autograd.grad(image, field, seed)
+        torch.autograd.grad(image, field, seed, retain_graph=True)
+    recovered = torch.autograd.grad(image, field, torch.ones_like(image))[0]
+    torch.testing.assert_close(recovered, torch.full_like(field, float(views)), rtol=0, atol=0)
 
 
 def test_out_schema_declares_only_output_mutation(warp_device):

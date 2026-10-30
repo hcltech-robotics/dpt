@@ -65,7 +65,10 @@ def test_fresh_process_projector_initialises_cuda_and_differentiates(precision):
 
 
 @pytest.mark.parametrize("precision", ["fp32", "fp64"])
-def test_projector_orders_cached_workspaces_and_temporary_fields_across_cuda_streams(precision):
+@pytest.mark.parametrize("views", [2, 5, 9])
+def test_projector_orders_cached_workspaces_and_temporary_fields_across_cuda_streams(
+    precision, views
+):
     grid = GridSpec((3, 3, 4), (0.7, 0.8, 0.9), (-1.0, -1.0, -1.0))
     panel = DetectorGeometry(
         (-8.0, 0.1, -0.2),
@@ -76,7 +79,10 @@ def test_projector_orders_cached_workspaces_and_temporary_fields_across_cuda_str
         (2, 3),
     )
     module = Projector(
-        grid=grid, geometry=BatchedGeometry((panel, panel)), precision=precision, samples_per_ray=47
+        grid=grid,
+        geometry=BatchedGeometry((panel,) * views),
+        precision=precision,
+        samples_per_ray=47,
     )
     owner, caller = torch.cuda.Stream(), torch.cuda.Stream()
     with torch.cuda.stream(owner):
